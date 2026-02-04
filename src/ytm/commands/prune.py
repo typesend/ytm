@@ -39,7 +39,10 @@ def prune_watch_later(
     playlist_id: Annotated[str, typer.Argument(help="Playlist ID (must be 'WL')")],
     older_than: Annotated[
         Optional[str],
-        typer.Option("--older-than", "-o", help="Delete items older than (e.g., '30d', '2w')"),
+        typer.Option(
+            "--older-than", "-o",
+            help="Delete items older than (e.g., '30d', '2w'). Uses first_seen_at from local backup since YouTube doesn't expose when items were added to Watch Later.",
+        ),
     ] = None,
     count: Annotated[
         Optional[int],
@@ -66,6 +69,10 @@ def prune_watch_later(
 
     Select items to delete using one of: --older-than, --count, or --all.
     If none specified, defaults to --older-than 90d.
+
+    Note: YouTube doesn't expose when items were added to Watch Later, so
+    --older-than uses first_seen_at (when we first backed up the item).
+    For immediate cleanup, use --all or --count instead.
     """
     if playlist_id.upper() != "WL":
         console.print("[red]Error: Prune command only works with Watch Later (WL).[/red]")

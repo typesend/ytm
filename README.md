@@ -82,7 +82,7 @@ uv run ytm prune WL --all
 # Delete the 100 oldest items (from bottom of list)
 uv run ytm prune WL --count 100
 
-# Delete items older than 90 days (based on first_seen_at)
+# Delete items older than 90 days
 uv run ytm prune WL --older-than 90d
 
 # Preview what would be deleted
@@ -92,7 +92,10 @@ uv run ytm prune WL --all --dry-run
 uv run ytm prune WL --all --batch-size 50 --delay 2
 ```
 
-**Note:** Chrome must be completely closed before pruning. Items are deleted from YouTube only; local backup is preserved for restore.
+**Notes:**
+- Chrome must be completely closed before pruning
+- Items are deleted from YouTube only; local backup is preserved for restore
+- `--older-than` uses `first_seen_at` from local backup (when we first saw the item), not when it was added to Watch Later—YouTube doesn't expose that. For immediate cleanup, use `--all` or `--count`.
 
 ### Restore
 
