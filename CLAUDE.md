@@ -14,12 +14,13 @@ uv run ytm backup --watch-later
 uv run ytm list playlists
 uv run ytm list items WL --at-version 1
 
+# Prune Watch Later (opens Chrome browser)
+uv run ytm prune WL --count 100  # Delete 100 oldest items
+uv run ytm prune WL --all        # Delete all items
+
 # Run tests
 uv run pytest
 uv run pytest tests/test_specific.py -k "test_name"
-
-# Install Playwright browsers (required for Watch Later pruning)
-uv run playwright install chromium
 ```
 
 ## Architecture
@@ -30,12 +31,14 @@ This is a CLI tool (`ytm`) for backing up YouTube playlists with time-travel cap
 
 1. **YouTube API** (`core/youtube_api.py`) - Fetches regular playlists via OAuth2
 2. **yt-dlp** (`core/youtube_ytdlp.py`) - Reads Watch Later playlist using browser cookies (YouTube API blocked WL access since 2016)
-3. **Playwright** (`core/browser.py`) - Deletes Watch Later items via browser automation (only way to modify WL)
+3. **undetected-chromedriver** (`core/browser.py`) - Deletes Watch Later items via browser automation (only way to modify WL). Opens real Chrome, sorts by oldest, deletes from top of list.
 4. **DuckLake** (`core/database.py`) - Stores all data with automatic snapshots for time-travel queries
 
 ### Key Design Decisions
 
-- **Watch Later is special**: Can be read via yt-dlp and pruned via Playwright, but never restored TO (API limitation)
+- **Watch Later is special**: Can be read via yt-dlp and pruned via browser automation, but never restored TO (API limitation)
+- **Browser-based pruning**: Uses undetected-chromedriver to open real Chrome, sort by oldest, and delete items from page. Separate Chrome profile stored in `~/.local/share/ytm/chrome-profile/` to persist YouTube login.
+- **Prune deletes from page, not database**: The `prune` command deletes items based on their position in YouTube's UI (after sorting by oldest), not based on local backup data. This avoids sync issues.
 - **DuckLake limitations**: No PRIMARY KEY or DEFAULT constraints - uniqueness handled in application code via upsert logic
 - **Time-travel queries**: Use `AT (VERSION => N)` or `AT (TIMESTAMP => 'YYYY-MM-DD')` syntax
 - **XDG-compliant storage**: Config in `~/.config/ytm/`, data in `~/.local/share/ytm/`

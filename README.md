@@ -16,9 +16,6 @@ A CLI tool for backing up YouTube playlists with time-travel capabilities. Query
 git clone <repo>
 cd youtube-playlist-manager
 uv sync
-
-# Install Playwright browsers (needed for Watch Later pruning)
-uv run playwright install chromium
 ```
 
 ## Setup
@@ -73,24 +70,35 @@ uv run ytm history diff 1 5
 
 ### Prune Watch Later
 
-Remove items from Watch Later using browser automation (YouTube API doesn't allow this):
+Remove items from Watch Later using browser automation. YouTube's API doesn't allow modifying Watch Later, so this command opens a real Chrome browser to delete items directly.
+
+**How it works:**
+1. Opens Chrome with a dedicated profile (your YouTube login persists between runs)
+2. Navigates to your Watch Later playlist
+3. Sorts by "Date added (oldest)" so oldest items appear first
+4. Deletes items one by one from the top of the list
 
 ```bash
-# Delete all items
-uv run ytm prune WL --all
-
-# Delete the 100 oldest items (sorted by "Date added oldest" on YouTube)
+# Delete the 100 oldest items
 uv run ytm prune WL --count 100
 
-# Control batch size and delay between deletions
-uv run ytm prune WL --all --batch-size 50 --delay 2
+# Delete ALL items (clears entire Watch Later)
+uv run ytm prune WL --all
+
+# Delete 200 items, but only 50 per browser session
+# (run multiple times to complete)
+uv run ytm prune WL --count 200 --batch-size 50
+
+# Slower deletion (3 seconds between each item)
+uv run ytm prune WL --count 50 --delay 3
 ```
 
 **Notes:**
-- First run will prompt you to log in to YouTube (uses a separate browser profile)
-- Items are deleted from YouTube only; local backup is preserved for restore
-- The browser sorts by "Date added (oldest)" and deletes from the top of the list
-- Uses undetected-chromedriver to avoid Google's bot detection
+- Requires Google Chrome to be installed
+- First run will prompt you to log in to YouTube in the browser window
+- Your login is saved to `~/.local/share/ytm/chrome-profile/` (separate from your main Chrome profile)
+- Local backup is NOT modified—run `ytm backup --watch-later` afterward to sync your backup
+- Uses [undetected-chromedriver](https://github.com/ultrafunkamsterdam/undetected-chromedriver) to avoid Google's bot detection
 
 ### Restore
 
@@ -106,7 +114,7 @@ uv run ytm restore WL --from-version 3 --create-new "Old Watch Later"
 
 Data is stored in XDG-compliant directories:
 - Config: `~/.config/ytm/` (OAuth tokens)
-- Data: `~/.local/share/ytm/` (DuckLake database)
+- Data: `~/.local/share/ytm/` (DuckLake database, Chrome profile for browser automation)
 
 ## Maintenance
 
@@ -126,5 +134,5 @@ conn.execute('CHECKPOINT ytm')
 - **Typer** + **Rich** for CLI
 - **DuckDB** + **DuckLake** for time-travel storage
 - **yt-dlp** for reading Watch Later (bypasses API restrictions)
-- **Playwright** for Watch Later deletion (browser automation)
+- **undetected-chromedriver** for Watch Later deletion (browser automation that evades bot detection)
 - **google-api-python-client** for YouTube Data API v3
