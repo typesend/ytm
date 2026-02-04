@@ -73,17 +73,26 @@ uv run ytm history diff 1 5
 
 ### Prune Watch Later
 
-Remove old items from Watch Later using browser automation (YouTube API doesn't allow this):
+Remove items from Watch Later using browser automation (YouTube API doesn't allow this):
 
 ```bash
-# Preview what would be deleted
-uv run ytm prune WL --older-than 90d --dry-run
+# Delete all items
+uv run ytm prune WL --all
 
-# Delete items older than 90 days (opens browser)
-uv run ytm prune WL --older-than 90d --batch-size 50
+# Delete the 100 oldest items (from bottom of list)
+uv run ytm prune WL --count 100
+
+# Delete items older than 90 days (based on first_seen_at)
+uv run ytm prune WL --older-than 90d
+
+# Preview what would be deleted
+uv run ytm prune WL --all --dry-run
+
+# Control batch size and delay between deletions
+uv run ytm prune WL --all --batch-size 50 --delay 2
 ```
 
-**Note:** Chrome must be completely closed before pruning.
+**Note:** Chrome must be completely closed before pruning. Items are deleted from YouTube only; local backup is preserved for restore.
 
 ### Restore
 
