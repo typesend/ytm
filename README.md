@@ -79,23 +79,18 @@ Remove items from Watch Later using browser automation (YouTube API doesn't allo
 # Delete all items
 uv run ytm prune WL --all
 
-# Delete the 100 oldest items (from bottom of list)
+# Delete the 100 oldest items (sorted by "Date added oldest" on YouTube)
 uv run ytm prune WL --count 100
-
-# Delete items older than 90 days
-uv run ytm prune WL --older-than 90d
-
-# Preview what would be deleted
-uv run ytm prune WL --all --dry-run
 
 # Control batch size and delay between deletions
 uv run ytm prune WL --all --batch-size 50 --delay 2
 ```
 
 **Notes:**
-- Chrome must be completely closed before pruning
+- First run will prompt you to log in to YouTube (uses a separate browser profile)
 - Items are deleted from YouTube only; local backup is preserved for restore
-- `--older-than` uses `first_seen_at` from local backup (when we first saw the item), not when it was added to Watch Later—YouTube doesn't expose that. For immediate cleanup, use `--all` or `--count`.
+- The browser sorts by "Date added (oldest)" and deletes from the top of the list
+- Uses undetected-chromedriver to avoid Google's bot detection
 
 ### Restore
 

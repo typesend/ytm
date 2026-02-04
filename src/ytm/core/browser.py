@@ -1,29 +1,14 @@
-"""Playwright browser automation for Watch Later management."""
+"""Browser automation for Watch Later management using undetected-chromedriver."""
 
-import subprocess
-import sys
 import time
 from datetime import datetime, timedelta
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from ytm.config import CHROME_PATH_MACOS, CHROME_USER_DATA_MACOS
+from ytm.config import get_data_dir
 
 console = Console()
-
-
-def is_chrome_running() -> bool:
-    """Check if Chrome is currently running."""
-    try:
-        result = subprocess.run(
-            ["pgrep", "-x", "Google Chrome"],
-            capture_output=True,
-            text=True,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
 
 
 def prune_watch_later_items(
@@ -47,99 +32,156 @@ def prune_watch_later_items(
         console.print("[yellow]Dry run - no items will be deleted[/yellow]")
         return [item["video_id"] for item in items_to_delete[:batch_size]]
 
-    if is_chrome_running():
-        console.print(
-            "[red]Error: Google Chrome must be completely closed before pruning.[/red]\n"
-            "Please close Chrome and try again."
-        )
-        return []
-
-    # Import playwright here to avoid startup cost when not needed
-    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+    import undetected_chromedriver as uc
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.common.action_chains import ActionChains
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
     deleted_ids = []
     items_to_process = items_to_delete[:batch_size]
 
     console.print(f"[cyan]Opening browser to delete {len(items_to_process)} items...[/cyan]")
 
-    with sync_playwright() as p:
-        try:
-            # Launch Chrome with existing user profile
-            browser = p.chromium.launch_persistent_context(
-                user_data_dir=str(CHROME_USER_DATA_MACOS),
-                executable_path=str(CHROME_PATH_MACOS),
-                headless=False,
-                channel="chrome",
-            )
-        except Exception as e:
-            console.print(f"[red]Failed to launch Chrome: {e}[/red]")
-            console.print(
-                "[yellow]Make sure Chrome is completely closed and try again.[/yellow]"
-            )
+    # Use a dedicated profile for ytm to avoid conflicts with main Chrome
+    ytm_profile = get_data_dir() / "chrome-profile"
+    ytm_profile.mkdir(parents=True, exist_ok=True)
+
+    options = uc.ChromeOptions()
+    options.add_argument(f"--user-data-dir={ytm_profile}")
+
+    driver = None
+    try:
+        # Get Chrome version
+        import subprocess
+        result = subprocess.run(
+            ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "--version"],
+            capture_output=True, text=True
+        )
+        chrome_version = int(result.stdout.strip().split()[-1].split('.')[0])
+        console.print(f"[dim]Detected Chrome version {chrome_version}[/dim]")
+
+        console.print("[dim]Launching Chrome...[/dim]")
+        driver = uc.Chrome(options=options, version_main=chrome_version)
+        console.print("[dim]Chrome launched.[/dim]")
+
+        # Navigate to Watch Later
+        console.print("[dim]Navigating to Watch Later...[/dim]")
+        driver.get("https://www.youtube.com/playlist?list=WL")
+        time.sleep(3)
+
+        # Check if we need to log in (Watch Later requires authentication)
+        if "Sign in" in driver.page_source or "Playlist doesn't exist" in driver.page_source:
+            console.print("\n[yellow]Please log in to YouTube in the browser window.[/yellow]")
+            console.print("[yellow]Press Enter after you've logged in...[/yellow]")
+            input()
+            # Navigate again after login
+            driver.get("https://www.youtube.com/playlist?list=WL")
+            time.sleep(3)
+
+        # Verify Watch Later page loaded correctly
+        page_source = driver.page_source
+        if "Playlist doesn't exist" in page_source:
+            console.print("[red]Error: Watch Later playlist not accessible. Are you logged into the correct account?[/red]")
             return []
 
-        page = browser.new_page()
+        if "Watch later" not in page_source and "Watch Later" not in page_source:
+            console.print("[red]Error: Watch Later page did not load correctly.[/red]")
+            console.print("[yellow]Current URL: " + driver.current_url + "[/yellow]")
+            return []
 
+        # Sort by oldest first so we can find the items we want to delete
+        console.print("[dim]Sorting by oldest first...[/dim]")
         try:
-            # Navigate to Watch Later
-            page.goto("https://www.youtube.com/playlist?list=WL")
-            page.wait_for_load_state("networkidle")
-            time.sleep(2)  # Extra wait for dynamic content
+            # Click the sort dropdown
+            sort_button = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, 'yt-sort-filter-sub-menu-renderer yt-dropdown-menu'))
+            )
+            sort_button.click()
+            time.sleep(0.5)
 
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console,
-            ) as progress:
-                task = progress.add_task("Deleting items...", total=len(items_to_process))
-
-                for item in items_to_process:
-                    video_id = item["video_id"]
-                    title = item.get("title", "Unknown")
-
-                    progress.update(task, description=f"Deleting: {title[:40]}...")
-
-                    try:
-                        # Find the video row by video ID
-                        video_selector = f'ytd-playlist-video-renderer:has(a[href*="{video_id}"])'
-                        video_element = page.locator(video_selector).first
-
-                        if not video_element.is_visible():
-                            console.print(f"[yellow]Video not found: {title}[/yellow]")
-                            progress.advance(task)
-                            continue
-
-                        # Hover to reveal menu button
-                        video_element.hover()
-                        time.sleep(0.5)
-
-                        # Click the 3-dot menu button
-                        menu_button = video_element.locator(
-                            'button[aria-label="Action menu"]'
-                        ).first
-                        menu_button.click()
-                        time.sleep(0.5)
-
-                        # Click "Remove from Watch Later"
-                        remove_button = page.locator(
-                            'ytd-menu-service-item-renderer:has-text("Remove from")'
-                        ).first
-                        remove_button.click()
-
-                        deleted_ids.append(video_id)
-                        time.sleep(delay)
-
-                    except PlaywrightTimeout:
-                        console.print(f"[yellow]Timeout for: {title}[/yellow]")
-                    except Exception as e:
-                        console.print(f"[yellow]Error deleting {title}: {e}[/yellow]")
-
-                    progress.advance(task)
-
+            # Click "Date added (oldest)"
+            oldest_option = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, '//tp-yt-paper-listbox//a[contains(., "Date added (oldest)")]'))
+            )
+            oldest_option.click()
+            time.sleep(2)  # Wait for re-sort
+            console.print("[dim]Sorted by oldest.[/dim]")
         except Exception as e:
-            console.print(f"[red]Browser automation error: {e}[/red]")
-        finally:
-            browser.close()
+            console.print(f"[yellow]Could not change sort order: {e}[/yellow]")
+            console.print("[yellow]Continuing with current order...[/yellow]")
+
+        console.print("[dim]Starting deletion...[/dim]")
+
+        # Delete items directly from the page (already sorted oldest first)
+        deleted_count = 0
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Deleting items...", total=batch_size)
+
+            while deleted_count < batch_size:
+                try:
+                    # Always get the first video in the list (oldest, since we sorted)
+                    video_elements = driver.find_elements(By.CSS_SELECTOR, 'ytd-playlist-video-renderer')
+
+                    if not video_elements:
+                        console.print("[yellow]No more videos found on page.[/yellow]")
+                        break
+
+                    video_element = video_elements[0]
+
+                    # Get video title for display
+                    try:
+                        title_el = video_element.find_element(By.CSS_SELECTOR, '#video-title')
+                        title = title_el.text[:40] if title_el.text else "Unknown"
+                    except:
+                        title = "Unknown"
+
+                    progress.update(task, description=f"Deleting: {title}...")
+
+                    # Scroll into view and hover
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", video_element)
+                    time.sleep(0.3)
+
+                    ActionChains(driver).move_to_element(video_element).perform()
+                    time.sleep(0.5)
+
+                    # Click the 3-dot menu button
+                    menu_button = video_element.find_element(By.CSS_SELECTOR, 'button[aria-label="Action menu"]')
+                    menu_button.click()
+                    time.sleep(0.5)
+
+                    # Click "Remove from Watch Later"
+                    remove_option = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((By.XPATH, '//ytd-menu-service-item-renderer[contains(., "Remove from")]'))
+                    )
+                    remove_option.click()
+
+                    deleted_count += 1
+                    deleted_ids.append(title)  # Track by title since we don't have IDs
+                    time.sleep(delay)
+
+                except TimeoutException:
+                    console.print(f"[yellow]Timeout, retrying...[/yellow]")
+                    time.sleep(1)
+                except NoSuchElementException:
+                    console.print(f"[yellow]Element not found, retrying...[/yellow]")
+                    time.sleep(1)
+                except Exception as e:
+                    console.print(f"[yellow]Error: {e}[/yellow]")
+                    break
+
+                progress.update(task, completed=deleted_count)
+
+    except Exception as e:
+        console.print(f"[red]Browser automation error: {e}[/red]")
+    finally:
+        if driver:
+            driver.quit()
 
     return deleted_ids
 
